@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  triton-server:
+    image: nvcr.io/nvidia/l4t-tensorrt:8.5.2-runtime
+    container_name: triton-server-jetson
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "8000:8000"  # HTTP endpoint
+      - "8001:8001"  # gRPC endpoint
+      - "8002:8002"  # Metrics endpoint
+    volumes:
+      - ./:/apps
+      - /tmp/triton:/tmp  # For temporary files
+    working_dir: /apps
+    shm_size: 2g
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    entrypoint: ["/bin/bash", "/apps/container_entrypoint.sh"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu] 
