@@ -12,15 +12,11 @@
 # - NVIDIA TensorRT must be installed.
 # - NVIDIA Triton Inference Server must be installed and configured.
 
-# Function to calculate the available GPU memory
-function get_free_gpu_memory() {
-    # Get the total memory and used memory from nvidia-smi
-    local total_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | awk '{print $1}')
-    local used_memory=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | awk '{print $1}')
-
-    # Calculate free memory
-    local free_memory=$((total_memory - used_memory))
-    echo "$free_memory"
+# Function to calculate a reasonable workspace size
+function get_workspace_size() {
+    # For Jetson devices, use a fixed workspace size based on device type
+    # Use a conservative value since nvidia-smi might not be available in the container
+    echo "1024"  # 1GB workspace size
 }
 
 # Script Flow:
@@ -64,21 +60,37 @@ if [[ "$3" == "--force-build" ]]; then
     force_build=true
 fi
 
-# Calculate workspace size based on free GPU memory
-workspace=$(get_free_gpu_memory)
+# Use a fixed workspace size
+workspace=$(get_workspace_size)
 
 mkdir -p ./models/yolov7/1/
 mkdir -p ./models/yolov7_qat/1/
 
+# Check if TensorRT tools are available
+if ! command -v /usr/src/tensorrt/bin/trtexec &> /dev/null; then
+    echo "Installing TensorRT tools..."
+    apt-get update && apt-get install -y tensorrt-dev
+fi
+
 # Convert YOLOv7 ONNX model to TensorRT engine with FP16 precision if force flag is set or model does not exist
 if [[ $force_build == true || ! -f "./models/yolov7/1/model.plan" ]]; then
-    /usr/src/tensorrt/bin/trtexec \
+    echo "Converting YOLOv7 ONNX model to TensorRT engine..."
+    if command -v /usr/src/tensorrt/bin/trtexec &> /dev/null; then
+        trt_cmd="/usr/src/tensorrt/bin/trtexec"
+    elif command -v trtexec &> /dev/null; then
+        trt_cmd="trtexec"
+    else
+        echo "Error: trtexec not found. Please install TensorRT."
+        exit 1
+    fi
+    
+    $trt_cmd \
         --onnx=./models_onnx/yolov7/yolov7_end2end.onnx \
         --minShapes=images:1x3x640x640 \
         --optShapes=images:${opt_batch_size}x3x640x640 \
         --maxShapes=images:${max_batch_size}x3x640x640 \
         --fp16 \
-        --workspace=$workspace \
+        --workspace=${workspace} \
         --saveEngine=./models/yolov7/1/model.plan
 
     # Check return code of trtexec
@@ -90,14 +102,24 @@ fi
 
 # Convert YOLOv7 QAT ONNX model to TensorRT engine with INT8 precision if force flag is set or model does not exist
 if [[ $force_build == true || ! -f "./models/yolov7_qat/1/model.plan" ]]; then
-    /usr/src/tensorrt/bin/trtexec \
+    echo "Converting YOLOv7 QAT ONNX model to TensorRT engine..."
+    if command -v /usr/src/tensorrt/bin/trtexec &> /dev/null; then
+        trt_cmd="/usr/src/tensorrt/bin/trtexec"
+    elif command -v trtexec &> /dev/null; then
+        trt_cmd="trtexec"
+    else
+        echo "Error: trtexec not found. Please install TensorRT."
+        exit 1
+    fi
+    
+    $trt_cmd \
         --onnx=./models_onnx/yolov7_qat/yolov7_qat_end2end.onnx \
         --minShapes=images:1x3x640x640 \
         --optShapes=images:${opt_batch_size}x3x640x640 \
         --maxShapes=images:${max_batch_size}x3x640x640 \
         --fp16 \
         --int8 \
-        --workspace=$workspace \
+        --workspace=${workspace} \
         --saveEngine=./models/yolov7_qat/1/model.plan
 
     # Check return code of trtexec
@@ -124,6 +146,7 @@ sed -i "s/max_batch_size: [0-9]*/max_batch_size: $max_batch_size/" "$config_file
 echo "max_batch_size updated to $max_batch_size in $config_file"
 
 # Start Triton Inference Server with the converted models
+echo "Starting Triton Server..."
 /opt/tritonserver/bin/tritonserver \
     --model-repository=/apps/models \
     --disable-auto-complete-config \

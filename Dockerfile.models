@@ -1,0 +1,22 @@
+ARG ECR_REGISTRY=246261010633.dkr.ecr.ap-southeast-2.amazonaws.com
+ARG BASE_IMAGE=bbtriton-base:latest
+
+FROM ${ECR_REGISTRY}/${BASE_IMAGE}
+
+# Copy model configuration and scripts
+COPY models_config/ /apps/models_config/
+COPY models_onnx/ /apps/models_onnx/
+COPY start-triton-server.sh /apps/
+COPY container_entrypoint.sh /apps/
+
+# Create model directories
+RUN mkdir -p /apps/models/yolov7/1/ && \
+    mkdir -p /apps/models/yolov7_qat/1/
+
+# Make scripts executable
+RUN chmod +x /apps/models_onnx/download_models.sh && \
+    chmod +x /apps/start-triton-server.sh && \
+    chmod +x /apps/container_entrypoint.sh
+
+# Override CMD with entrypoint script
+ENTRYPOINT ["/bin/bash", "/apps/container_entrypoint.sh"] 
